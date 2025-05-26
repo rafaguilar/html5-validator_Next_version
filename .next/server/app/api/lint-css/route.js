@@ -1,13 +1,8 @@
 const CHUNK_PUBLIC_PATH = "server/app/api/lint-css/route.js";
 const runtime = require("../../../chunks/[turbopack]_runtime.js");
-runtime.loadChunk("server/chunks/[root-of-the-server]__bd4e33e4._.js");
+runtime.loadChunk("server/chunks/node_modules_stylelint_lib_index_mjs_7297cec1._.js");
 runtime.loadChunk("server/chunks/node_modules_next_dist_99abb285._.js");
-runtime.loadChunk("server/chunks/node_modules_stylelint_e787321d._.js");
-runtime.loadChunk("server/chunks/node_modules_css-tree_lib_f24bc372._.js");
-runtime.loadChunk("server/chunks/node_modules_js-yaml_fcde89a1._.js");
-runtime.loadChunk("server/chunks/node_modules_table_dist_src_79fe5e50._.js");
-runtime.loadChunk("server/chunks/node_modules_bed15356._.js");
-runtime.loadChunk("server/chunks/[root-of-the-server]__306890b7._.js");
+runtime.loadChunk("server/chunks/[root-of-the-server]__6b392df9._.js");
 runtime.getOrInstantiateRuntimeModule("[project]/.next-internal/server/app/api/lint-css/route/actions.js [app-rsc] (server actions loader, ecmascript)", CHUNK_PUBLIC_PATH);
 runtime.getOrInstantiateRuntimeModule("[project]/node_modules/next/dist/esm/build/templates/app-route.js { INNER_APP_ROUTE => \"[project]/src/app/api/lint-css/route.ts [app-route] (ecmascript)\" } [app-route] (ecmascript)", CHUNK_PUBLIC_PATH);
 module.exports = runtime.getOrInstantiateRuntimeModule("[project]/node_modules/next/dist/esm/build/templates/app-route.js { INNER_APP_ROUTE => \"[project]/src/app/api/lint-css/route.ts [app-route] (ecmascript)\" } [app-route] (ecmascript)", CHUNK_PUBLIC_PATH).exports;
