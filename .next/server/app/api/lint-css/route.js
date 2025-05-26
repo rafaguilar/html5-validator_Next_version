@@ -1,6 +1,5 @@
 const CHUNK_PUBLIC_PATH = "server/app/api/lint-css/route.js";
 const runtime = require("../../../chunks/[turbopack]_runtime.js");
-runtime.loadChunk("server/chunks/node_modules_stylelint_lib_index_mjs_7297cec1._.js");
 runtime.loadChunk("server/chunks/node_modules_next_dist_99abb285._.js");
 runtime.loadChunk("server/chunks/[root-of-the-server]__6b392df9._.js");
 runtime.getOrInstantiateRuntimeModule("[project]/.next-internal/server/app/api/lint-css/route/actions.js [app-rsc] (server actions loader, ecmascript)", CHUNK_PUBLIC_PATH);
