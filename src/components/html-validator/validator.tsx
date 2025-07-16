@@ -1,211 +1,132 @@
 
-import JSZip from 'jszip';
-import { HTMLHint, type LintResult, type RuleSet } from 'htmlhint';
-import type { ValidationResult, ValidationIssue, ClickTagInfo } from '@/types';
+"use client";
 
-const MAX_FILE_SIZE = 200 * 1024; // 200KB
+import React, { useState, useEffect } from 'react';
+import type { ValidationResult, PreviewResult } from '@/types';
+import { useToast } from "@/hooks/use-toast";
+import { ValidationResults } from './validation-results';
+import { FileUploader } from './file-uploader';
+import { processAndCacheFile } from '@/actions/preview-actions';
+import { runClientSideValidation } from '@/lib/client-validator';
 
-const createIssue = (type: 'error' | 'warning' | 'info', message: string, details?: string, rule?: string): ValidationIssue => ({
-  id: `issue-client-${Math.random().toString(36).substr(2, 9)}`,
-  type,
-  message,
-  details,
-  rule: rule || (type === 'error' ? 'client-error' : (type === 'warning' ? 'client-warning' : 'client-info')),
-});
+export function Validator() {
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [validationResults, setValidationResults] = useState<ValidationResult[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const { toast } = useToast();
 
-const findHtmlFileInZip = async (zip: JSZip): Promise<{ path: string, content: string } | null> => {
-  const allFiles = Object.keys(zip.files);
-  const htmlFiles = allFiles.filter(path => path.toLowerCase().endsWith('.html') && !path.startsWith("__MACOSX/") && !zip.files[path].dir);
-  if (htmlFiles.length === 0) return null;
-  const sorted = htmlFiles.sort((a, b) => (a.split('/').length - b.split('/').length));
-  const mainHtmlPath = sorted.find(p => p.toLowerCase().endsWith('index.html')) || sorted[0];
-  const htmlFileObject = zip.file(mainHtmlPath);
-  if (htmlFileObject) {
-    const content = await htmlFileObject.async("string");
-    return { path: htmlFileObject.name, content };
-  }
-  return null;
-};
-
-const lintHtmlContent = (htmlString: string, isCreatopyProject?: boolean): ValidationIssue[] => {
-  if (!htmlString) return [];
-  const issues: ValidationIssue[] = [];
-  const lines = htmlString.split(/\r?\n/);
-  const missingSpaceRegex = /<[^>]+?"class=/g;
-
-  lines.forEach((line, index) => {
-    let match;
-    missingSpaceRegex.lastIndex = 0;
-    while ((match = missingSpaceRegex.exec(line)) !== null) {
-      const tagMatch = line.match(/<[^>]*"class=[^>]*>/);
-      const details = tagMatch
-        ? `A space is required between attributes. Problem found in tag: \`${tagMatch[0]}\` on Line ${index + 1}.`
-        : `A space is required before the 'class' attribute on Line ${index + 1}.`;
-
-      issues.push(createIssue(
-        'error',
-        'Missing space before class attribute.',
-        details,
-        'attr-missing-space-before-class'
-      ));
+  const handleValidate = async () => {
+    console.log("Preview and Font Type Formats Fixing_1");
+    if (selectedFiles.length === 0) {
+      toast({ title: "No file selected", description: "Please select one or more ZIP files.", variant: "destructive" });
+      return;
     }
-  });
 
-  const ruleset: RuleSet = {
-    'tag-pair': true,
-    'attr-value-double-quotes': true,
-    'spec-char-escape': true,
+    setIsLoading(true);
+    // Initialize results with a pending state
+    setValidationResults(selectedFiles.map(file => ({
+      id: `${file.name}-${file.lastModified}`,
+      fileName: file.name,
+      status: 'pending',
+      issues: [],
+      preview: null
+    })));
+
+    const allResults: ValidationResult[] = [];
+
+    for (const file of selectedFiles) {
+      try {
+        console.log(`[DIAG_VALIDATE] Start processing file: ${file.name}`);
+
+        // Perform client-side analysis first
+        const validationPart = await runClientSideValidation(file);
+        console.log(`[DIAG_VALIDATE] Client-side analysis complete for ${file.name}. Issues found: ${validationPart.issues.length}`);
+
+        // Then, process for preview (server action)
+        const formData = new FormData();
+        formData.append('file', file);
+        const previewOutcome = await processAndCacheFile(formData);
+        console.log(`[DIAG_VALIDATE] Server action 'processAndCacheFile' outcome for ${file.name}:`, previewOutcome);
+
+        let previewResult: PreviewResult | null = null;
+        if (previewOutcome && 'previewId' in previewOutcome) {
+          previewResult = {
+            id: previewOutcome.previewId,
+            fileName: file.name,
+            entryPoint: previewOutcome.entryPoint,
+            securityWarning: previewOutcome.securityWarning
+          };
+          console.log(`[DIAG_VALIDATE] Successfully created previewResult object for ${file.name}`);
+        } else if (previewOutcome && 'error' in previewOutcome) {
+          console.error(`[DIAG_VALIDATE] Preview error for ${file.name}:`, previewOutcome.error);
+          toast({ title: `Preview Error for ${file.name}`, description: previewOutcome.error, variant: "destructive" });
+        } else {
+            console.error(`[DIAG_VALIDATE] Unknown error from preview action for ${file.name}. Outcome:`, previewOutcome);
+        }
+
+        // Combine client-side validation with server-side preview result
+        const finalResult: ValidationResult = {
+          id: `${file.name}-${file.lastModified}`,
+          fileName: file.name,
+          fileSize: file.size,
+          ...validationPart,
+          preview: previewResult,
+        };
+        
+        console.log(`[DIAG_VALIDATE] Final combined result for ${file.name}:`, JSON.parse(JSON.stringify(finalResult)));
+        allResults.push(finalResult);
+
+      } catch (error) {
+        console.error(`[DIAG_VALIDATE] CRITICAL validation failed for ${file.name}:`, error);
+        toast({ title: `Validation Error for ${file.name}`, description: "An unexpected error occurred during processing.", variant: "destructive" });
+        // Create a result object even on critical failure
+        allResults.push({
+          id: `${file.name}-${file.lastModified}`,
+          fileName: file.name,
+          fileSize: file.size,
+          status: 'error',
+          issues: [{
+            id: `client-critical-${Date.now()}`,
+            type: 'error',
+            message: 'File processing failed unexpectedly.',
+            details: error instanceof Error ? error.message : String(error)
+          }],
+          preview: null
+        });
+      }
+    }
+
+    console.log(`[DIAG_VALIDATE] All files processed. Updating state with ${allResults.length} results.`);
+    setValidationResults(allResults);
+    setIsLoading(false);
+    
+    if (allResults.length > 0) {
+      toast({ title: "Analysis Complete", description: `Processed ${allResults.length} file(s). Check the report below.` });
+    }
   };
 
-  HTMLHint.verify(htmlString, ruleset).forEach((msg: LintResult) => {
-    let issueType: 'error' | 'warning' | 'info' = msg.type === 'error' ? 'error' : 'warning';
-    let detailsText = `Line: ${msg.line}, Col: ${msg.col}, Rule: ${msg.rule.id}`;
-
-    if (msg.rule.id === 'attr-value-double-quotes') {
-      if (isCreatopyProject) {
-        issueType = 'info';
-        detailsText = `Line: ${msg.line}, Col: ${msg.col}. Creatopy often uses unquoted attributes. While HTML5 allows this for some attributes, double quotes are best practice for consistency and to avoid parsing issues.`;
-      } else {
-        issueType = 'warning';
-        detailsText += `. Using single quotes or no quotes is not recommended. Double quotes are the standard and prevent parsing errors.`;
-      }
+  useEffect(() => {
+    if (selectedFiles.length === 0) {
+        setValidationResults([]);
     }
-    issues.push(createIssue(issueType, msg.message, detailsText, msg.rule.id));
-  });
+  }, [selectedFiles]);
 
-  return issues;
-};
-
-const findClickTagsInHtml = (htmlContent: string | null): ClickTagInfo[] => {
-  if (!htmlContent) return [];
-  const clickTags: ClickTagInfo[] = [];
-  const clickTagRegex = /(?:var|let|const)\s+(?:window\.)?([a-zA-Z0-9_]*clickTag[a-zA-Z0-9_]*)\s*=\s*["'](https?:\/\/[^"']+)["']/g;
-  let match;
-  while ((match = clickTagRegex.exec(htmlContent)) !== null) {
-    clickTags.push({ name: match[1], url: match[2], isHttps: match[2].startsWith('https://') });
-  }
-  return clickTags;
-};
-
-interface CreativeAssetAnalysis {
-  foundHtmlPath?: string;
-  htmlContent?: string;
-  issues: ValidationIssue[];
-  htmlFileCount: number;
-  allHtmlFilePathsInZip: string[];
-  isAdobeAnimateProject: boolean;
-  isCreatopyProject: boolean;
+  return (
+    <div className="w-full">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-8 items-start">
+        <div className="md:col-span-1">
+          <FileUploader
+            selectedFiles={selectedFiles}
+            setSelectedFiles={setSelectedFiles}
+            onValidate={handleValidate}
+            isLoading={isLoading}
+            validationResults={validationResults}
+          />
+        </div>
+        <div className="md:col-span-2">
+            <ValidationResults results={validationResults} isLoading={isLoading} />
+        </div>
+      </div>
+    </div>
+  );
 }
-
-const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis> => {
-    console.log("[DIAG_ASSETS] Starting analysis of creative assets.");
-    const issues: ValidationIssue[] = [];
-    let foundHtmlPath: string | undefined, htmlContentForAnalysis: string | undefined;
-    let isAdobeAnimateProject = false, isCreatopyProject = false;
-
-    // Comprehensive list of allowed file extensions
-    const allowedTextExtensions = ['.html', '.css', '.js', '.json', '.txt', '.svg', '.xml'];
-    const allowedImageExtensions = ['.gif', '.jpg', '.jpeg', '.png'];
-    const allowedFontExtensions = ['.eot', '.otf', '.ttf', '.woff', '.woff2'];
-    const allAllowedExtensions = [...allowedTextExtensions, ...allowedImageExtensions, ...allowedFontExtensions];
-
-    const zip = await JSZip.loadAsync(file);
-    const allZipFiles = Object.keys(zip.files).filter(path => !zip.files[path].dir && !path.startsWith("__MACOSX/") && !path.endsWith('.DS_Store'));
-
-    allZipFiles.forEach(path => {
-        const fileExt = (/\.[^.]+$/.exec(path) || [''])[0].toLowerCase();
-        if (!allAllowedExtensions.includes(fileExt)) {
-            const message = `Unsupported file type in ZIP: '${fileExt}'`;
-            const details = `File: '${path}'. This file type is not standard and may not work in all ad platforms.`;
-            console.log(`[DIAG_ASSETS] ${message} - ${details}`);
-            issues.push(createIssue('warning', message, details, 'unsupported-file-type'));
-        } else {
-            console.log(`[DIAG_ASSETS] Supported file type found: '${path}'`);
-        }
-    });
-
-    const allHtmlFilePathsInZip = allZipFiles.filter(path => path.toLowerCase().endsWith('.html'));
-    const htmlFileCount = allHtmlFilePathsInZip.length;
-    const htmlFileInfo = await findHtmlFileInZip(zip);
-
-    if (htmlFileInfo) {
-        foundHtmlPath = htmlFileInfo.path;
-        htmlContentForAnalysis = htmlFileInfo.content;
-        console.log(`[DIAG_ASSETS] Found main HTML file: ${foundHtmlPath}`);
-    } else {
-        console.log("[DIAG_ASSETS] No HTML file found in ZIP.");
-    }
-  
-    if (htmlContentForAnalysis) {
-      if (htmlContentForAnalysis.includes("window.creatopyEmbed")) {
-        isCreatopyProject = true;
-        issues.push(createIssue('info', 'Creatopy project detected.', 'Specific checks for unquoted HTML attribute values have been adjusted.', 'authoring-tool-creatopy'));
-      }
-  
-      const doc = new DOMParser().parseFromString(htmlContentForAnalysis, 'text/html');
-      if (doc.querySelector('meta[name="authoring-tool"][content="Adobe_Animate_CC"]')) {
-        isAdobeAnimateProject = true;
-      }
-    }
-  
-    return { foundHtmlPath, htmlContent: htmlContentForAnalysis, issues, htmlFileCount, allHtmlFilePathsInZip, isAdobeAnimateProject, isCreatopyProject };
-};
-
-export const runClientSideValidation = async (file: File): Promise<Omit<ValidationResult, 'id' | 'fileName' | 'fileSize' | 'preview'>> => {
-    const analysis = await analyzeCreativeAssets(file);
-    const issues: ValidationIssue[] = [...analysis.issues];
-
-    if (file.size > MAX_FILE_SIZE) {
-        issues.push(createIssue('error', `File size exceeds limit (${(MAX_FILE_SIZE / 1024).toFixed(0)}KB).`, `Actual size: ${(file.size / 1024).toFixed(2)}KB`, 'file-size-exceeded'));
-    }
-
-    if (analysis.htmlFileCount === 0) {
-        issues.push(createIssue('error', 'No HTML file found in ZIP.', 'An HTML file is required to serve as the entry point for the creative.', 'no-html-file'));
-    } else if (analysis.htmlFileCount > 1) {
-        issues.push(createIssue('warning', 'Multiple HTML files found in ZIP.', `Found: ${analysis.allHtmlFilePathsInZip.join(', ')}. The validator will analyze the most likely primary file: ${analysis.foundHtmlPath}`, 'multiple-html-files'));
-    }
-
-    if (analysis.isAdobeAnimateProject && !analysis.isCreatopyProject) {
-        issues.push(createIssue('info', 'Adobe Animate CC project detected.', `Specific checks for Animate structure applied.`, 'authoring-tool-animate-cc'));
-    }
-
-    const detectedClickTags = findClickTagsInHtml(analysis.htmlContent || null);
-    if (detectedClickTags.length === 0 && analysis.htmlContent) {
-        issues.push(createIssue('warning', 'No standard clickTag variable found.', 'A clickTag is required for ad tracking. Example: var clickTag = "https://www.example.com";', 'missing-clicktag'));
-    }
-
-    if (analysis.htmlContent) {
-        issues.push(...lintHtmlContent(analysis.htmlContent, analysis.isCreatopyProject));
-    }
-
-    let actualMetaWidth: number | undefined, actualMetaHeight: number | undefined;
-    if (analysis.htmlContent) {
-        const metaTagMatch = analysis.htmlContent.match(/<meta\s+name=["']?ad\.size["']?\s+content=["']?width=(\d+)[,;]?\s*height=(\d+)["']?/i);
-        if (metaTagMatch) {
-            actualMetaWidth = parseInt(metaTagMatch[1], 10);
-            actualMetaHeight = parseInt(metaTagMatch[2], 10);
-        } else {
-            issues.push(createIssue('error', 'Required ad.size meta tag not found.', 'The HTML file must contain a meta tag like: <meta name="ad.size" content="width=300,height=250">', 'missing-meta-size'));
-        }
-    }
-
-    const adDimensions = { width: actualMetaWidth || 300, height: actualMetaHeight || 250, actual: actualMetaWidth ? { width: actualMetaWidth, height: actualMetaHeight } : undefined };
-    const hasErrors = issues.some(i => i.type === 'error');
-    const hasWarnings = issues.some(i => i.type === 'warning');
-    let status: ValidationResult['status'] = 'success';
-    if (hasErrors) {
-        status = 'error';
-    } else if (hasWarnings) {
-        status = 'warning';
-    }
-
-    return {
-        status,
-        issues,
-        adDimensions,
-        fileStructureOk: !!analysis.foundHtmlPath,
-        detectedClickTags: detectedClickTags.length > 0 ? detectedClickTags : undefined,
-        maxFileSize: MAX_FILE_SIZE,
-        hasCorrectTopLevelClickTag: detectedClickTags.some(t => t.name === "clickTag" && t.isHttps)
-    };
-};
