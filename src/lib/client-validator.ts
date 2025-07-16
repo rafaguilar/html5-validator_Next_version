@@ -30,9 +30,10 @@ const findHtmlFileInZip = async (zip: JSZip): Promise<{ path: string, content: s
 const lintHtmlContent = (htmlString: string, isCreatopyProject?: boolean): ValidationIssue[] => {
   if (!htmlString) return [];
   const issues: ValidationIssue[] = [];
+  
+  // Custom check for missing space before class attribute, as htmlhint may not catch it.
   const lines = htmlString.split(/\r?\n/);
   const missingSpaceRegex = /<[^>]+?"class=/g;
-
   lines.forEach((line, index) => {
     let match;
     missingSpaceRegex.lastIndex = 0;
@@ -41,13 +42,7 @@ const lintHtmlContent = (htmlString: string, isCreatopyProject?: boolean): Valid
       const details = tagMatch
         ? `A space is required between attributes. Problem found in tag: \`${tagMatch[0]}\` on Line ${index + 1}.`
         : `A space is required before the 'class' attribute on Line ${index + 1}.`;
-
-      issues.push(createIssue(
-        'error',
-        'Missing space before class attribute.',
-        details,
-        'attr-missing-space-before-class'
-      ));
+      issues.push(createIssue('error', 'Missing space before class attribute.', details, 'attr-missing-space-before-class'));
     }
   });
 
@@ -112,14 +107,14 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
     const allZipFiles = Object.keys(zip.files).filter(path => !zip.files[path].dir && !path.startsWith("__MACOSX/") && !path.endsWith('.DS_Store'));
 
     allZipFiles.forEach(path => {
-        const fileExt = (/\.[^.]+$/.exec(path) || [''])[0].toLowerCase();
-        if (!allAllowedExtensions.includes(fileExt)) {
+        const fileExt = (/\.([^.]+)$/.exec(path) || [''])[0].toLowerCase();
+        if (allAllowedExtensions.includes(fileExt)) {
+             console.log(`[DIAG_ASSETS] Supported file type found: '${path}' of type ${fileExt}`);
+        } else {
             const message = `Unsupported file type in ZIP: '${fileExt}'`;
             const details = `File: '${path}'. This file type is not standard and may not work in all ad platforms.`;
-            console.log(`[DIAG_ASSETS] Unsupported file found: ${path}`);
+            console.warn(`[DIAG_ASSETS] ${message} - ${details}`);
             issues.push(createIssue('warning', message, details, 'unsupported-file-type'));
-        } else {
-            console.log(`[DIAG_ASSETS] Supported file type found: '${path}' of type ${fileExt}`);
         }
     });
 
@@ -131,8 +126,6 @@ const analyzeCreativeAssets = async (file: File): Promise<CreativeAssetAnalysis>
         foundHtmlPath = htmlFileInfo.path;
         htmlContentForAnalysis = htmlFileInfo.content;
         console.log(`[DIAG_ASSETS] Found main HTML file: ${foundHtmlPath}`);
-    } else {
-        console.log("[DIAG_ASSETS] No HTML file found in ZIP.");
     }
   
     if (htmlContentForAnalysis) {
